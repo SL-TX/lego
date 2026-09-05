@@ -89,6 +89,12 @@ type ObtainRequest struct {
 	PreferredChain   string
 	EnableCommonName bool
 
+	// NUCCompliance adds the fields/extensions required by the ИС НУЦ CA:
+	// the countryName C=RU in the CSR subject and the KeyUsage extension
+	// (digitalSignature, keyEncipherment, keyAgreement).
+	// If false, the standard (Let's Encrypt) CSR is generated.
+	NUCCompliance bool
+
 	// A string uniquely identifying the profile
 	// which will be used to affect issuance of the certificate requested by this Order.
 	// - https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-4
@@ -376,6 +382,9 @@ func (c *Certifier) getForOrder(ctx context.Context, domains []string, order acm
 		SAN:            san,
 		MustStaple:     request.MustStaple,
 		EmailAddresses: request.EmailAddresses,
+		Country:         nucCountry(request.NUCCompliance),
+		KeyUsage:        nucKeyUsage(request.NUCCompliance),
+		ExtendedKeyUsage: nucExtendedKeyUsage(request.NUCCompliance),
 	}
 
 	csr, err := certcrypto.CreateCSR(privateKey, csrOptions)
@@ -543,6 +552,12 @@ type RenewOptions struct {
 	// Not supported for CSR request.
 	MustStaple     bool
 	EmailAddresses []string
+
+	// NUCCompliance adds the fields/extensions required by the ИС НУЦ CA:
+	// the countryName C=RU in the CSR subject and the KeyUsage extension
+	// (digitalSignature, keyEncipherment, keyAgreement).
+	// If false, the standard (Let's Encrypt) CSR is generated.
+	NUCCompliance bool
 }
 
 // Renew takes a Resource and tries to renew the certificate.
@@ -608,8 +623,9 @@ func (c *Certifier) Renew(ctx context.Context, certRes Resource, options *RenewO
 	}
 
 	request := ObtainRequest{
-		Domains:    certcrypto.ExtractDomains(x509Cert),
-		PrivateKey: privateKey,
+		Domains:       certcrypto.ExtractDomains(x509Cert),
+		PrivateKey:    privateKey,
+		NUCCompliance: options != nil && options.NUCCompliance,
 	}
 
 	if options != nil {
@@ -810,4 +826,35 @@ func sanitizeDomain(domains []string) []string {
 	}
 
 	return sanitizedDomains
+}
+
+// NUCCompliance helpers.
+const (
+	nucCountryName = "RU"
+
+	nucKeyUsageBits = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageKeyAgreement
+)
+
+func nucCountry(compliance bool) []string {
+	if !compliance {
+		return nil
+	}
+
+	return []string{nucCountryName}
+}
+
+func nucKeyUsage(compliance bool) x509.KeyUsage {
+	if !compliance {
+		return 0
+	}
+
+	return nucKeyUsageBits
+}
+
+func nucExtendedKeyUsage(compliance bool) []x509.ExtKeyUsage {
+	if !compliance {
+		return nil
+	}
+
+	return []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
 }

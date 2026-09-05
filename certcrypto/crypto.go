@@ -37,6 +37,12 @@ const (
 var (
 	tlsFeatureExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 24}
 	ocspMustStapleFeature  = []byte{0x30, 0x03, 0x02, 0x01, 0x05}
+
+	// keyUsageExtensionOID is the object identifier of the KeyUsage extension (RFC 5280 section 4.2.1.3).
+	keyUsageExtensionOID = asn1.ObjectIdentifier{2, 5, 29, 15}
+
+	// extendedKeyUsageExtensionOID is the object identifier of the ExtendedKeyUsage extension (RFC 5280 section 4.2.1.12).
+	extendedKeyUsageExtensionOID = asn1.ObjectIdentifier{2, 5, 29, 37}
 )
 
 type DERCertificateBytes []byte
@@ -134,6 +140,17 @@ type CSROptions struct {
 	SAN            []string
 	MustStaple     bool
 	EmailAddresses []string
+
+	// Country, if not empty, is added to the subject of the CSR.
+	Country []string
+
+	// KeyUsage, if non-zero, is added as a KeyUsage extension (RFC 5280 section 4.2.1.3)
+	// to the extensions of the CSR.
+	KeyUsage x509.KeyUsage
+
+	// ExtendedKeyUsage, if non-empty, is added as an ExtendedKeyUsage extension
+	// (RFC 5280 section 4.2.1.12) to the extensions of the CSR.
+	ExtendedKeyUsage []x509.ExtKeyUsage
 }
 
 func CreateCSR(privateKey crypto.Signer, opts CSROptions) ([]byte, error) {
@@ -157,6 +174,28 @@ func CreateCSR(privateKey crypto.Signer, opts CSROptions) ([]byte, error) {
 		IPAddresses:    ipAddresses,
 	}
 
+	if len(opts.Country) > 0 {
+		template.Subject.Country = opts.Country
+	}
+
+	if opts.KeyUsage != 0 {
+		kuExtension, err := keyUsageExtension(opts.KeyUsage)
+		if err != nil {
+			return nil, err
+		}
+
+		template.ExtraExtensions = append(template.ExtraExtensions, kuExtension)
+	}
+
+	if len(opts.ExtendedKeyUsage) > 0 {
+		ekuExtension, err := extendedKeyUsageExtension(opts.ExtendedKeyUsage)
+		if err != nil {
+			return nil, err
+		}
+
+		template.ExtraExtensions = append(template.ExtraExtensions, ekuExtension)
+	}
+
 	if opts.MustStaple {
 		template.ExtraExtensions = append(template.ExtraExtensions, pkix.Extension{
 			Id:    tlsFeatureExtensionOID,
@@ -165,6 +204,59 @@ func CreateCSR(privateKey crypto.Signer, opts CSROptions) ([]byte, error) {
 	}
 
 	return x509.CreateCertificateRequest(rand.Reader, &template, privateKey)
+}
+
+// keyUsageExtension returns the KeyUsage extension
+// (RFC 5280 section 4.2.1.3) carrying the given key usage bits.
+func keyUsageExtension(ku x509.KeyUsage) (pkix.Extension, error) {
+	var value byte
+	bitLength := 0
+	for bit := 0; bit < 8; bit++ {
+		if ku&(1<<uint(bit)) != 0 {
+			value |= 1 << uint(7-bit)
+			bitLength = bit + 1
+		}
+	}
+
+	valueDER, err := asn1.Marshal(asn1.BitString{Bytes: []byte{value}, BitLength: bitLength})
+	if err != nil {
+		return pkix.Extension{}, err
+	}
+
+	return pkix.Extension{
+		Id:    keyUsageExtensionOID,
+		Value: valueDER,
+	}, nil
+}
+
+// extKeyUsageOIDs maps an ExtKeyUsage to the associated OID (RFC 5280 section 4.2.1.12).
+var extKeyUsageOIDs = map[x509.ExtKeyUsage]asn1.ObjectIdentifier{
+	x509.ExtKeyUsageServerAuth: {1, 3, 6, 1, 5, 5, 7, 3, 1},
+	x509.ExtKeyUsageClientAuth: {1, 3, 6, 1, 5, 5, 7, 3, 2},
+}
+
+// extendedKeyUsageExtension returns the ExtendedKeyUsage extension
+// (RFC 5280 section 4.2.1.12) carrying the given key purpose OIDs.
+func extendedKeyUsageExtension(ekus []x509.ExtKeyUsage) (pkix.Extension, error) {
+	oids := make([]asn1.ObjectIdentifier, 0, len(ekus))
+	for _, eku := range ekus {
+		oid, ok := extKeyUsageOIDs[eku]
+		if !ok {
+			return pkix.Extension{}, fmt.Errorf("no OID found for extended key usage %d", eku)
+		}
+
+		oids = append(oids, oid)
+	}
+
+	valueDER, err := asn1.Marshal(oids)
+	if err != nil {
+		return pkix.Extension{}, err
+	}
+
+	return pkix.Extension{
+		Id:    extendedKeyUsageExtensionOID,
+		Value: valueDER,
+	}, nil
 }
 
 func PEMEncode(data any) []byte {

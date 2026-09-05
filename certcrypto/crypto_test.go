@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/pem"
 	"testing"
 	"time"
@@ -91,6 +92,18 @@ func TestGenerateCSR(t *testing.T) {
 			expected: expected{len: 419},
 		},
 		{
+			desc:       "NUC compliance (countryName C=RU and KeyUsage extension)",
+			privateKey: privateKey,
+			opts: CSROptions{
+				Domain:           testDomain1,
+				Country:          []string{"RU"},
+				KeyUsage:         x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageKeyAgreement,
+				ExtendedKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+				MustStaple:       true,
+			},
+			expected: expected{len: 440},
+		},
+		{
 			desc:       "private key nil",
 			privateKey: nil,
 			opts: CSROptions{
@@ -124,6 +137,27 @@ func TestGenerateCSR(t *testing.T) {
 
 				assert.NotEmpty(t, csr)
 				assert.Len(t, csr, test.expected.len)
+
+				parsedCSR, err := x509.ParseCertificateRequest(csr)
+				require.NoError(t, err)
+
+				if len(test.opts.Country) > 0 {
+					assert.Equal(t, test.opts.Country, parsedCSR.Subject.Country)
+				} else {
+					assert.Empty(t, parsedCSR.Subject.Country)
+				}
+
+				if test.opts.KeyUsage != 0 {
+					assertCSRKeyUsageExtension(t, parsedCSR, test.opts.KeyUsage)
+				} else {
+					assertNoCSRKeyUsageExtension(t, parsedCSR)
+				}
+
+				if len(test.opts.ExtendedKeyUsage) > 0 {
+					assertCSRExtendedKeyUsageExtension(t, parsedCSR, test.opts.ExtendedKeyUsage)
+				} else {
+					assertNoCSRExtendedKeyUsageExtension(t, parsedCSR)
+				}
 			}
 		})
 	}
@@ -194,4 +228,66 @@ func TestParsePEMPrivateKey(t *testing.T) {
 	// Decoding non-PEM input should return an error
 	_, err = ParsePEMPrivateKey([]byte("This is not PEM"))
 	require.Errorf(t, err, "Expected to return an error for non-PEM input")
+}
+
+// assertCSRKeyUsageExtension checks that the CSR contains the KeyUsage extension
+// carrying exactly the given key usage bits.
+func assertCSRKeyUsageExtension(t *testing.T, csr *x509.CertificateRequest, ku x509.KeyUsage) {
+	t.Helper()
+
+	ext, err := keyUsageExtension(ku)
+	require.NoError(t, err)
+
+	expected := ext.Value
+
+	for _, ext := range csr.Extensions {
+		if ext.Id.Equal(keyUsageExtensionOID) {
+			assert.Equal(t, expected, ext.Value)
+			return
+		}
+	}
+
+	t.Fatal("the CSR does not contain the KeyUsage extension")
+}
+
+// assertNoCSRKeyUsageExtension checks that the CSR does not contain a KeyUsage extension.
+func assertNoCSRKeyUsageExtension(t *testing.T, csr *x509.CertificateRequest) {
+	t.Helper()
+
+	for _, ext := range csr.Extensions {
+		if ext.Id.Equal(keyUsageExtensionOID) {
+			t.Fatal("the CSR should not contain the KeyUsage extension")
+		}
+	}
+}
+
+// assertCSRExtendedKeyUsageExtension checks that the CSR contains the ExtendedKeyUsage extension
+// carrying exactly the given key purposes.
+func assertCSRExtendedKeyUsageExtension(t *testing.T, csr *x509.CertificateRequest, ekus []x509.ExtKeyUsage) {
+	t.Helper()
+
+	ext, err := extendedKeyUsageExtension(ekus)
+	require.NoError(t, err)
+
+	expected := ext.Value
+
+	for _, ext := range csr.Extensions {
+		if ext.Id.Equal(extendedKeyUsageExtensionOID) {
+			assert.Equal(t, expected, ext.Value)
+			return
+		}
+	}
+
+	t.Fatal("the CSR does not contain the ExtendedKeyUsage extension")
+}
+
+// assertNoCSRExtendedKeyUsageExtension checks that the CSR does not contain an ExtendedKeyUsage extension.
+func assertNoCSRExtendedKeyUsageExtension(t *testing.T, csr *x509.CertificateRequest) {
+	t.Helper()
+
+	for _, ext := range csr.Extensions {
+		if ext.Id.Equal(extendedKeyUsageExtensionOID) {
+			t.Fatal("the CSR should not contain the ExtendedKeyUsage extension")
+		}
+	}
 }

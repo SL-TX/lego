@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-acme/lego/v5/challenge"
@@ -98,7 +99,14 @@ func NewDNSProviderConfig(config *Config) (*DNSProvider, error) {
 		client.HTTPClient = config.HTTPClient
 	}
 
-	client.HTTPClient = clientdebug.Wrap(client.HTTPClient)
+	// Hide the credentials (sent in the request body) from the debug dump.
+	client.HTTPClient = clientdebug.Wrap(
+		client.HTTPClient,
+		clientdebug.WithValues(
+			url.QueryEscape(config.Username),
+			url.QueryEscape(config.Password),
+		),
+	)
 
 	if config.TLSCert != "" || config.TLSKey != "" {
 		if config.TLSCert == "" {
