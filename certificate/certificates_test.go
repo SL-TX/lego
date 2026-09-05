@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"testing"
@@ -407,4 +408,22 @@ type resolverMock struct {
 
 func (r *resolverMock) Solve(_ context.Context, _ []acme.Authorization) error {
 	return r.error
+}
+
+func TestNUCCompliance(t *testing.T) {
+	t.Run("enabled", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, []string{"RU"}, nucCountry(true))
+		assert.Equal(t, x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment|x509.KeyUsageKeyAgreement, nucKeyUsage(true))
+		assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, nucExtendedKeyUsage(true))
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Nil(t, nucCountry(false))
+		assert.Equal(t, x509.KeyUsage(0), nucKeyUsage(false))
+		assert.Nil(t, nucExtendedKeyUsage(false))
+	})
 }

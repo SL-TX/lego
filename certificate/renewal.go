@@ -77,6 +77,12 @@ type RenewOptions struct {
 	// Not supported for CSR request.
 	MustStaple     bool
 	EmailAddresses []string
+
+	// NUCCompliance adds the fields/extensions required by the ИС НУЦ CA:
+	// the countryName C=RU in the CSR subject and the KeyUsage extension
+	// (digitalSignature, keyEncipherment, keyAgreement).
+	// If false, the standard (Let's Encrypt) CSR is generated.
+	NUCCompliance bool
 }
 
 // GetRenewalInfo sends a request to the ACME server's renewalInfo endpoint to obtain a suggested renewal window.
@@ -213,6 +219,7 @@ func newRenewRequest(certRes Resource, x509Cert *x509.Certificate, options *Rene
 	request.Bundle = options.Bundle
 	request.PreferredChain = options.PreferredChain
 	request.EnableCommonName = options.EnableCommonName
+	request.NUCCompliance = options.NUCCompliance
 	request.EmailAddresses = options.EmailAddresses
 	request.Profile = options.Profile
 	request.AlwaysDeactivateAuthorizations = options.AlwaysDeactivateAuthorizations

@@ -88,6 +88,12 @@ type ObtainRequest struct {
 	PreferredChain   string
 	EnableCommonName bool
 
+	// NUCCompliance adds the fields/extensions required by the ИС НУЦ CA:
+	// the countryName C=RU in the CSR subject and the KeyUsage extension
+	// (digitalSignature, keyEncipherment, keyAgreement).
+	// If false, the standard (Let's Encrypt) CSR is generated.
+	NUCCompliance bool
+
 	// A string uniquely identifying the profile
 	// which will be used to affect issuance of the certificate requested by this Order.
 	// - https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-4
@@ -375,6 +381,9 @@ func (c *Certifier) getForOrder(ctx context.Context, domains []string, order acm
 		SAN:            san,
 		MustStaple:     request.MustStaple,
 		EmailAddresses: request.EmailAddresses,
+		Country:         nucCountry(request.NUCCompliance),
+		KeyUsage:        nucKeyUsage(request.NUCCompliance),
+		ExtendedKeyUsage: nucExtendedKeyUsage(request.NUCCompliance),
 	}
 
 	csr, err := certcrypto.CreateCSR(privateKey, csrOptions)
@@ -689,4 +698,35 @@ func getObtainRequestPrivateKey(request ObtainRequest) (crypto.Signer, error) {
 	}
 
 	return certcrypto.GeneratePrivateKey(request.KeyType)
+}
+
+// NUCCompliance helpers.
+const (
+	nucCountryName = "RU"
+
+	nucKeyUsageBits = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageKeyAgreement
+)
+
+func nucCountry(compliance bool) []string {
+	if !compliance {
+		return nil
+	}
+
+	return []string{nucCountryName}
+}
+
+func nucKeyUsage(compliance bool) x509.KeyUsage {
+	if !compliance {
+		return 0
+	}
+
+	return nucKeyUsageBits
+}
+
+func nucExtendedKeyUsage(compliance bool) []x509.ExtKeyUsage {
+	if !compliance {
+		return nil
+	}
+
+	return []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
 }

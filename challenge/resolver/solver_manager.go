@@ -154,6 +154,27 @@ func validate(ctx context.Context, core *api.Core, domain string, chlg acme.Chal
 	// After the path is sent, the ACME server will access our server.
 	// Repeatedly check the server for an updated status on our request.
 	operation := func() error {
+        // Some ACME servers do not return the authorization URL in the Link header
+        // (rel="up") of the challenge response (RFC 8555, Section 7.5.1).
+        // As a fallback, poll the challenge URL to check the challenge status.
+        if chlng.AuthorizationURL == "" {
+           chlgResp, err := core.Challenges.Get(ctx, chlg.URL)
+           if err != nil {
+              return backoff.Permanent(err)
+           }
+
+           valid, err := checkChallengeStatus(chlgResp)
+           if err != nil {
+              return backoff.Permanent(err)
+           }
+
+           if valid {
+              log.Info("The server validated our request.", log.DomainAttr(domain))
+              return nil
+           }
+
+           return fmt.Errorf("the server didn't respond to our request (status=%s)", chlgResp.Status)
+        }
 		authz, err := core.Authorizations.Get(ctx, chlng.AuthorizationURL)
 		if err != nil {
 			return backoff.Permanent(err)
